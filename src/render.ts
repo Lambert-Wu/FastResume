@@ -139,14 +139,21 @@ export const fonts = {
 };
 export function rowStyle(line: Line, s: Settings, continued = false) {
   const t = s.types[line.kind === "blank" ? "text" : line.kind];
-  const split = s.entrySplit?.length === 2 ? s.entrySplit : [50, 72];
+  // 三栏行用 three、两栏行用 two，各走各的，互不牵动
+  const split = s.entrySplit || { three: [50, 72], two: [58] };
+  const cells = line.kind === "entry" ? line.text.split(" | ").length : 0;
+  const three = split.three?.length === 2 ? split.three : [50, 72];
+  const two = split.two?.length === 1 ? split.two : [58];
   return {
     fontSize: t.size,
     paddingTop: continued ? 0 : t.before,
     paddingBottom: t.after,
     lineHeight: s.lineHeight,
-    // 经历行三栏的分界位置（百分比），供 .entry-divider 定位
-    "--split-a": split[0],
-    "--split-b": split[1],
+    // 供 .entry-divider 定位；两栏行只用到 --split-x
+    "--split-a": three[0],
+    "--split-b": three[1],
+    "--split-x": two[0],
+    // 让 CSS 知道这行是几栏
+    "--entry-columns": cells,
   };
 }

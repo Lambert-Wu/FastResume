@@ -626,14 +626,22 @@ a {
 .entry-cell:nth-child(2):not(:last-child) {
   text-align: center;
 }
-/* 三栏宽度按 settings.entrySplit 的百分比分配，由行上的 --split-a / --split-b 传入 */
-.row-entry:has(.entry-divider) > .entry-cell:first-child {
+/* 三栏宽度按 entrySplit.three 的百分比分配，由行上的 --split-a / --split-b 传入。
+   选择器限定 3 个格子，两栏行不会命中，因此拖三栏不会带动两栏 */
+.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:first-child {
   flex: 0 0 calc(var(--split-a, 50) * 1%);
 }
-.row-entry:has(.entry-divider) > .entry-cell:nth-child(3) {
+.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:nth-child(3) {
   flex: 0 0 calc((var(--split-b, 72) - var(--split-a, 50)) * 1%);
 }
-.row-entry:has(.entry-divider) > .entry-cell:last-child {
+.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:last-child {
+  flex: 1 1 auto;
+}
+/* 两栏宽度只受 --split-x 控制，和三栏完全解耦 */
+.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3))) > .entry-cell:first-child {
+  flex: 0 0 calc(var(--split-x, 58) * 1%);
+}
+.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3))) > .entry-cell:last-child {
   flex: 1 1 auto;
 }
 /* 栏间竖线：编辑时作为拖动手柄；打印与导出 PDF 时由 @media print 去掉 */
@@ -1514,8 +1522,8 @@ a {
   .entry-divider {
     display: none !important;
   }
-  .row-entry:has(.entry-divider) > .entry-cell:first-child,
-  .row-entry:has(.entry-divider) > .entry-cell:nth-child(3) {
+  /* 导出时恢复等分，三栏与两栏都回到自然布局 */
+  .row-entry:has(.entry-divider) > .entry-cell {
     flex: 1;
   }
   .flow-row {

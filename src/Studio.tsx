@@ -327,7 +327,7 @@ function Editable({
   ghost?: boolean;
   flashing?: boolean;
   allowDrop?: (id: string) => boolean;
-  onSplit?: (split: number[]) => void;
+  onSplit?: (split: { three: number[]; two: number[] }) => void;
 }) {
   const el = useRef<HTMLDivElement>(null),
     composing = useRef(false),
@@ -347,23 +347,34 @@ function Editable({
   const flush = () => {
     if (el.current && !composing.current) onChange(editableText(el.current));
   };
-  // 拖栏间竖线：按容器宽度换算成百分比，夹在两端之间，松手后一次性写回
+  // 拖栏间竖线：按容器宽度换算成百分比。三栏行改 three、两栏行改 two，互不牵动
   const dragDivider = (e: React.PointerEvent, handle: Element) => {
     if (ghost || !el.current) return;
     const index = Number(handle.getAttribute("data-divider")) - 1;
+    const columns = el.current.querySelectorAll(":scope > .entry-cell").length;
     const row = el.current.getBoundingClientRect();
-    if (!row.width || (index !== 0 && index !== 1)) return;
+    if (!row.width || index < 0) return;
+    // 只有三栏行有两根线；两栏行只有 index 0
+    if (columns !== 3 && columns !== 2) return;
+    if (columns === 2 && index !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const base =
-      settings.entrySplit?.length === 2 ? [...settings.entrySplit] : [50, 72];
+    const split = settings.entrySplit || { three: [50, 72], two: [58] };
+    const three = split.three?.length === 2 ? [...split.three] : [50, 72];
+    const two = split.two?.length === 1 ? [...split.two] : [58];
+    const base = columns === 3 ? three : two;
     const move = (ev: PointerEvent) => {
       const pct = ((ev.clientX - row.left) / row.width) * 100;
-      const lower = index === 0 ? 12 : base[0] + 8;
-      const upper = index === 0 ? base[1] - 8 : 88;
-      const next = [...base];
-      next[index] = Math.round(Math.min(upper, Math.max(lower, pct)));
-      onSplit?.(next);
+      const prev = index === 0 ? 12 : base[index - 1] + 8;
+      const next = index === base.length - 1 ? 88 : base[index + 1] - 8;
+      const value = Math.round(Math.min(next, Math.max(prev, pct)));
+      if (columns === 3) {
+        const updated = [...three];
+        updated[index] = value;
+        onSplit?.({ three: updated, two });
+      } else {
+        onSplit?.({ three, two: [value] });
+      }
     };
     const up = () => {
       window.removeEventListener("pointermove", move);

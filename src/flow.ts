@@ -53,8 +53,8 @@ export interface Settings {
   accent: string;
   font: "sans" | "serif" | "nunito";
   lineHeight: number;
-  /** 经历行三栏的分界位置，按百分比；只在编辑时可拖动，导出/打印不画线 */
-  entrySplit: number[];
+  /** 经历行分栏：三栏（三个字段）与两栏（两个字段）各有一套分界位置，互不影响 */
+  entrySplit: { three: number[]; two: number[] };
   types: Record<Exclude<Kind, "blank">, TypeStyle>;
 }
 export interface Resume {
@@ -120,7 +120,7 @@ export const defaultSettings = (): Settings => ({
   accent: "#0756a5",
   font: "sans",
   lineHeight: 1.5,
-  entrySplit: [50, 72],
+  entrySplit: { three: [50, 72], two: [58] },
   types: {
     name: { size: 24, before: 0, after: 0 },
     section: { size: 16, before: 2, after: 2 },
@@ -573,13 +573,25 @@ export function readResume(raw: unknown): Resume {
     ? s.headerAlign
     : "template";
   d.lineHeight = numeric(s.lineHeight, d.lineHeight, 1.1, 2.2);
-  d.entrySplit = Array.isArray(s.entrySplit)
-    ? s.entrySplit
-        .slice(0, 2)
-        .map((v: unknown) => numeric(v, 50, 12, 88))
-        .sort((a: number, b: number) => a - b)
-    : [50, 72];
-  if (d.entrySplit.length !== 2) d.entrySplit = [50, 72];
+  // 分栏点：三栏两个、两栏一个。兼容旧版直接把数组存在 entrySplit 的写法
+  const legacy = s.entrySplit as unknown;
+  const splitRaw: { three?: unknown; two?: unknown } =
+    legacy && !Array.isArray(legacy) && typeof legacy === "object"
+      ? (legacy as { three?: unknown; two?: unknown })
+      : { three: legacy };
+  const points = (v: unknown, fallback: number[], want: number) => {
+    const list = Array.isArray(v)
+      ? v
+          .slice(0, want)
+          .map((x: unknown) => numeric(x, 50, 12, 88))
+          .sort((a: number, b: number) => a - b)
+      : [];
+    return list.length === want ? list : fallback;
+  };
+  d.entrySplit = {
+    three: points(splitRaw.three, [50, 72], 2),
+    two: points(splitRaw.two, [58], 1),
+  };
   for (const k of Object.keys(d.types) as (keyof Settings["types"])[]) {
     const t = s.types?.[k] || {};
     d.types[k] = {
