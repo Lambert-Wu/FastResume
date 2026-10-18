@@ -1540,7 +1540,7 @@ export default function Studio() {
         <a className="brand" href="./">
           <FileText size={23} />
           <span>
-            简历工坊<small>炒肉多，写简历。</small>
+            简历工坊<small>Lambert，写简历。</small>
           </span>
         </a>
         <div className="doc-switch">
@@ -2374,7 +2374,7 @@ export default function Studio() {
                       className={`mini-paper mini-${t.id}`}
                       style={{ "--mini-accent": t.color } as CSSProperties}
                     >
-                      <strong>炒肉多</strong>
+                      <strong>Lambert</strong>
                       <small>138 0000 2468 | zhangxiaoming@example.com</small>
                       {["教育背景", "实习经历", "项目经历", "专业技能"].map(
                         (s, i) => (
@@ -2834,7 +2834,7 @@ export default function Studio() {
                 </p>
                 <p>
                   <b>5. 调样式（右栏）：</b>
-                  六套模板（炒肉多经典、黑线、标签式、学术、青岚、红序）点一下即换，内容不受影响。
+                  六套模板（Lambert经典、黑线、标签式、学术、青岚、红序）点一下即换，内容不受影响。
                   「拼接内容」把选好的板块或经历模板插到当前行后面。
                   「间距与字号」能按内容类型分别调上下间距和字号，也能改行距和四边页边距；
                   底部还可以写自定义 CSS。

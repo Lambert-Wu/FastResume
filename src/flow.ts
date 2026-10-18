@@ -72,7 +72,7 @@ export const templates: {
 }[] = [
   {
     id: "blue",
-    name: "炒肉多经典",
+    name: "Lambert经典",
     desc: "居中表头 · 蓝色细线 · 紧凑清晰",
     color: "#0756a5",
   },
@@ -222,7 +222,7 @@ export const demo = demoFor("blue");
 export function initialResume(template: Template = "blue"): Resume {
   return {
     version: 2,
-    name: "炒肉多的简历",
+    name: "Lambert的简历",
     template,
     lines: parseMarkdown(demoFor(template)),
     settings: {
