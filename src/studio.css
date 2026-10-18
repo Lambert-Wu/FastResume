@@ -614,8 +614,6 @@ a {
 .row-entry {
   font-weight: 700;
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
   align-items: baseline;
 }
 .entry-cell {
@@ -627,6 +625,52 @@ a {
 }
 .entry-cell:nth-child(2):not(:last-child) {
   text-align: center;
+}
+/* 三栏宽度按 settings.entrySplit 的百分比分配，由行上的 --split-a / --split-b 传入 */
+.row-entry:has(.entry-divider) > .entry-cell:first-child {
+  flex: 0 0 calc(var(--split-a, 50) * 1%);
+}
+.row-entry:has(.entry-divider) > .entry-cell:nth-child(3) {
+  flex: 0 0 calc((var(--split-b, 72) - var(--split-a, 50)) * 1%);
+}
+.row-entry:has(.entry-divider) > .entry-cell:last-child {
+  flex: 1 1 auto;
+}
+/* 栏间竖线：编辑时作为拖动手柄；打印与导出 PDF 时由 @media print 去掉 */
+.entry-divider {
+  flex: 0 0 auto;
+  align-self: stretch;
+  position: relative;
+  width: 13px;
+  margin-inline: -7px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.entry-divider::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 0.1em;
+  bottom: 0.1em;
+  width: 1px;
+  background: var(--entry-divider, #c9c4bb);
+}
+.entry-divider::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--entry-divider, #c9c4bb);
+}
+.entry-divider:hover::before,
+.entry-divider:hover::after {
+  background: var(--accent, #0756a5);
+  border-color: var(--accent, #0756a5);
 }
 .row-entry:has(.entry-cell:nth-child(2):last-child) > .entry-cell:first-child {
   flex: 1.8;
@@ -1465,6 +1509,14 @@ a {
   .caret-bar,
   .md-line-mark {
     display: none !important;
+  }
+  /* 栏间竖线只是编辑时的拖动参照，导出 PDF 不画 */
+  .entry-divider {
+    display: none !important;
+  }
+  .row-entry:has(.entry-divider) > .entry-cell:first-child,
+  .row-entry:has(.entry-divider) > .entry-cell:nth-child(3) {
+    flex: 1;
   }
   .flow-row {
     caret-color: transparent;

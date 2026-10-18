@@ -309,6 +309,7 @@ function Editable({
   ghost = false,
   flashing = false,
   allowDrop,
+  onSplit,
 }: {
   piece: Piece;
   template: Template;
@@ -326,6 +327,7 @@ function Editable({
   ghost?: boolean;
   flashing?: boolean;
   allowDrop?: (id: string) => boolean;
+  onSplit?: (split: number[]) => void;
 }) {
   const el = useRef<HTMLDivElement>(null),
     composing = useRef(false),
@@ -344,6 +346,31 @@ function Editable({
   }, [html, piece]);
   const flush = () => {
     if (el.current && !composing.current) onChange(editableText(el.current));
+  };
+  // 拖栏间竖线：按容器宽度换算成百分比，夹在两端之间，松手后一次性写回
+  const dragDivider = (e: React.PointerEvent, handle: Element) => {
+    if (ghost || !el.current) return;
+    const index = Number(handle.getAttribute("data-divider")) - 1;
+    const row = el.current.getBoundingClientRect();
+    if (!row.width || (index !== 0 && index !== 1)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const base =
+      settings.entrySplit?.length === 2 ? [...settings.entrySplit] : [50, 72];
+    const move = (ev: PointerEvent) => {
+      const pct = ((ev.clientX - row.left) / row.width) * 100;
+      const lower = index === 0 ? 12 : base[0] + 8;
+      const upper = index === 0 ? base[1] - 8 : 88;
+      const next = [...base];
+      next[index] = Math.round(Math.min(upper, Math.max(lower, pct)));
+      onSplit?.(next);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
   return (
     <div
@@ -378,6 +405,10 @@ function Editable({
         suppressContentEditableWarning
         className={`flow-row row-${piece.line.kind} ${contact ? "row-contact" : ""} ${piece.continued ? "continued" : ""}`}
         style={rowStyle(piece.line, settings, piece.continued)}
+        onPointerDown={(e) => {
+          const handle = (e.target as HTMLElement).closest(".entry-divider");
+          if (handle) dragDivider(e, handle);
+        }}
         onFocus={onSelect}
         onClick={onSelect}
         onInput={flush}
@@ -2131,6 +2162,7 @@ export default function Studio() {
                         setArmed("");
                       }}
                       onBlur={() => setArmed("")}
+                      onSplit={(split) => settings({ entrySplit: split })}
                     />
                   ))}
                   {doc.pictures

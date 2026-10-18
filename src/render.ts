@@ -77,10 +77,13 @@ export function lineHtml(
   if (line.kind === "entry" && text.includes(" | ")) {
     const fields = text.split(" | ");
     return fields
-      .map(
-        (s, i) =>
-          `<span class="entry-cell" data-placeholder="${i === 0 ? "左侧内容" : i === fields.length - 1 ? "右侧内容" : "中间内容"}">${inline(s) || "<br>"}</span>`,
-      )
+      .map((s, i) => {
+        const cell = `<span class="entry-cell" data-placeholder="${i === 0 ? "左侧内容" : i === fields.length - 1 ? "右侧内容" : "中间内容"}">${inline(s) || "<br>"}</span>`;
+        // 栏与栏之间插一根竖线：编辑时可见可拖动，打印/导出时不画
+        return i === 0
+          ? cell
+          : `<span class="entry-divider" contenteditable="false" role="separator" aria-label="调整栏目宽度" data-divider="${i}" title="拖动调整栏目宽度"></span>${cell}`;
+      })
       .join("");
   }
   return `<span class="ink"${line.kind === "section" ? ` data-title="${escapeHtml(text)}"` : ""}>${inline(text) || "<br>"}</span>`;
@@ -136,10 +139,14 @@ export const fonts = {
 };
 export function rowStyle(line: Line, s: Settings, continued = false) {
   const t = s.types[line.kind === "blank" ? "text" : line.kind];
+  const split = s.entrySplit?.length === 2 ? s.entrySplit : [50, 72];
   return {
     fontSize: t.size,
     paddingTop: continued ? 0 : t.before,
     paddingBottom: t.after,
     lineHeight: s.lineHeight,
+    // 经历行三栏的分界位置（百分比），供 .entry-divider 定位
+    "--split-a": split[0],
+    "--split-b": split[1],
   };
 }

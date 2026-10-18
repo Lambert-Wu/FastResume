@@ -53,6 +53,8 @@ export interface Settings {
   accent: string;
   font: "sans" | "serif" | "nunito";
   lineHeight: number;
+  /** 经历行三栏的分界位置，按百分比；只在编辑时可拖动，导出/打印不画线 */
+  entrySplit: number[];
   types: Record<Exclude<Kind, "blank">, TypeStyle>;
 }
 export interface Resume {
@@ -118,6 +120,7 @@ export const defaultSettings = (): Settings => ({
   accent: "#0756a5",
   font: "sans",
   lineHeight: 1.5,
+  entrySplit: [50, 72],
   types: {
     name: { size: 24, before: 0, after: 0 },
     section: { size: 16, before: 2, after: 2 },
@@ -570,6 +573,13 @@ export function readResume(raw: unknown): Resume {
     ? s.headerAlign
     : "template";
   d.lineHeight = numeric(s.lineHeight, d.lineHeight, 1.1, 2.2);
+  d.entrySplit = Array.isArray(s.entrySplit)
+    ? s.entrySplit
+        .slice(0, 2)
+        .map((v: unknown) => numeric(v, 50, 12, 88))
+        .sort((a: number, b: number) => a - b)
+    : [50, 72];
+  if (d.entrySplit.length !== 2) d.entrySplit = [50, 72];
   for (const k of Object.keys(d.types) as (keyof Settings["types"])[]) {
     const t = s.types?.[k] || {};
     d.types[k] = {
