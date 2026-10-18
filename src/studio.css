@@ -377,23 +377,48 @@ a {
   tab-size: 2;
   outline: none;
 }
+/* 三栏之间的拉伸手柄：加宽到 11px 并给中间的握把加浅色底槽，
+   常态就能看见，不必把鼠标移上去才知道能拖 */
 .panel-resizer {
-  width: 7px;
+  width: 11px;
   flex-shrink: 0;
-  background: #eeece7;
-  border-inline: 1px solid #dedbd5;
+  background: #e2ded7;
+  border-inline: 1px solid #cfcac2;
   cursor: col-resize;
   display: flex;
   align-items: center;
   justify-content: center;
   touch-action: none;
-  color: #a49c92;
+  color: #8a8278;
   z-index: 5;
+}
+/* 手柄中间的握把：竖条 + 三颗点，让它自己显形 */
+.panel-resizer svg {
+  box-sizing: content-box;
+  width: 9px;
+  height: 26px;
+  flex: none;
+  padding: 0 1px;
+  border-radius: 5px;
+  background: #fbfaf8;
+  border: 1px solid #cfcac2;
+  color: #7b7369;
 }
 .panel-resizer:hover,
 .panel-resizer:focus {
   background: #c68c72;
+  border-inline-color: #b0745c;
   color: white;
+}
+.panel-resizer:hover svg,
+.panel-resizer:focus svg {
+  background: #fdf1ed;
+  border-color: #b0745c;
+  color: #a4402f;
+}
+.panel-resizer:focus-visible {
+  outline: 2px solid #a4402f;
+  outline-offset: -2px;
 }
 .preview-panel {
   flex: 1;
@@ -2413,15 +2438,9 @@ a {
   font-size: 11px;
   line-height: 1.5;
 }
+/* 右侧那条复用 .panel-resizer 的加宽与握把样式，只保留一处声明 */
 .panel-resizer-right {
-  width: 6px;
-  border-inline: 1px solid #e2ded8;
-  background: #f2efea;
-}
-.panel-resizer-right {
-  width: 6px;
-  border-inline: 1px solid #e2ded8;
-  background: #f2efea;
+  width: 11px;
 }
 .header-history {
   display: flex;
