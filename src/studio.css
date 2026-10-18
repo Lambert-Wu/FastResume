@@ -626,22 +626,28 @@ a {
 .entry-cell:nth-child(2):not(:last-child) {
   text-align: center;
 }
-/* 三栏宽度按 entrySplit.three 的百分比分配，由行上的 --split-a / --split-b 传入。
-   选择器限定 3 个格子，两栏行不会命中，因此拖三栏不会带动两栏 */
-.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:first-child {
+/* ---- 经历行分栏宽度 ----
+   行的子元素结构是「格子, 竖线, 格子, 竖线, 格子」，竖线也占一个 nth-child 位。
+   所以判断「第几栏」不能用 nth-child(3)（那是第 2 个竖线位），
+   必须用 :nth-child(n of .entry-cell) —— 只在 .entry-cell 里数序号。
+   同理，判断「有没有第 3 栏」要用 :has(> .entry-cell:nth-child(3 of .entry-cell))，
+   否则两栏行（cell, divider, cell）会被误判成三栏。
+
+   三栏：--split-a / --split-b
+   两栏：--split-x，与三栏完全解耦（拖三栏不动两栏，反之亦然） */
+.row-entry:has(> .entry-cell:nth-child(3 of .entry-cell)) > .entry-cell:nth-child(1 of .entry-cell) {
   flex: 0 0 calc(var(--split-a, 50) * 1%);
 }
-.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:nth-child(3) {
+.row-entry:has(> .entry-cell:nth-child(3 of .entry-cell)) > .entry-cell:nth-child(2 of .entry-cell) {
   flex: 0 0 calc((var(--split-b, 72) - var(--split-a, 50)) * 1%);
 }
-.row-entry:has(.entry-divider):has(> .entry-cell:nth-child(3)) > .entry-cell:last-child {
+.row-entry:has(> .entry-cell:nth-child(3 of .entry-cell)) > .entry-cell:nth-child(3 of .entry-cell) {
   flex: 1 1 auto;
 }
-/* 两栏宽度只受 --split-x 控制，和三栏完全解耦 */
-.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3))) > .entry-cell:first-child {
+.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3 of .entry-cell))) > .entry-cell:nth-child(1 of .entry-cell) {
   flex: 0 0 calc(var(--split-x, 58) * 1%);
 }
-.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3))) > .entry-cell:last-child {
+.row-entry:has(.entry-divider):not(:has(> .entry-cell:nth-child(3 of .entry-cell))) > .entry-cell:nth-child(2 of .entry-cell) {
   flex: 1 1 auto;
 }
 /* 栏间竖线：编辑时作为拖动手柄；打印与导出 PDF 时由 @media print 去掉 */
@@ -680,7 +686,10 @@ a {
   background: var(--accent, #0756a5);
   border-color: var(--accent, #0756a5);
 }
-.row-entry:has(.entry-cell:nth-child(2):last-child) > .entry-cell:first-child {
+/* 旧规则：没有拖动竖线的两栏经历行，左边占 1.8 份。
+   必须排除「带 .entry-divider 的行」，否则特指度与本文件上面的 --split-x 规则相同、
+   且位置更靠后，会把 --split-x 完全覆盖掉（两栏拖动就失效、且跟着三栏的 --split-a 走）。 */
+.row-entry:not(:has(.entry-divider)):has(.entry-cell:nth-child(2):last-child) > .entry-cell:first-child {
   flex: 1.8;
 }
 .row-bullet {
