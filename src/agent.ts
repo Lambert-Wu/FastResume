@@ -31,6 +31,8 @@ export interface AgentTurn {
 export interface AgentReply {
   reply: string;
   actions: AgentAction[];
+  /** 「按 JD 优化」第一步返回的匹配度分析；普通对话和改写步骤都是 undefined */
+  analysis?: JdAnalysis | null;
 }
 export type AgentAction = { type?: string } & Record<string, unknown>;
 
@@ -89,6 +91,32 @@ const lineNo = (v: unknown, max: number, allowZero = false) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) && n >= (allowZero ? 0 : 1) && n <= max ? n : -1;
 };
+
+/** 行号 → 这条指令实际要动的那一行。
+ *
+ *  为什么需要这一步：空行（kind === "blank"）在分页渲染时会被 filter 掉
+ *  （见 flow.ts 的 paginate），所以在界面上根本看不见。
+ *  模型如果指到了空行，按原样改就是「改了但界面一点变化都没有」，
+ *  用户会觉得按钮坏了。这里统一换算成最近的、界面上看得见的一行。
+ *
+ *  返回 -1 表示这条指令本来就不合法（行号越界之类），交给调用方报错。 */
+function aimedLine(
+  lines: Line[],
+  raw: unknown,
+  opts: { allowZero?: boolean; includeBlank?: boolean } = {},
+): number | "same" {
+  const at = lineNo(raw, lines.length, opts.allowZero);
+  if (at < 0) return -1;
+  if (opts.includeBlank || at === 0) return at;
+  const visible = (index: number) => !!lines[index] && lines[index].kind !== "blank";
+  if (visible(at - 1)) return at;
+  // 先往前找（同一段落内部的空行，前一行通常才是那句话）
+  for (let i = at - 2; i >= 0; i--) if (visible(i)) return i + 1;
+  // 前面全是空行，再往后找
+  for (let i = at; i < lines.length; i++) if (visible(i)) return i + 1;
+  // 整段都是空行，找不到能改的行——不能硬改一个，那样用户看不到任何变化
+  return "same";
+}
 const hexColor = (v: unknown) =>
   typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : "";
 
@@ -125,8 +153,12 @@ export function describeDoc(
   if (includeContent)
     head.push(
       "",
-      "正文（数字是行号，含 markdown 标记）：",
-      ...doc.lines.map((line, index) => `${index + 1}: ${toMarkdown([line])}`),
+      "正文（数字是行号，含 markdown 标记；标了「空行」的那几行在版面上看不见，不要指它们）：",
+      ...doc.lines.map((line, index) =>
+        line.kind === "blank"
+          ? `${index + 1}: （空行）`
+          : `${index + 1}: ${toMarkdown([line])}`,
+      ),
     );
   return head.join("\n");
 }
@@ -142,6 +174,8 @@ export const AGENT_CONTENT_PROMPT = `
 
 内容编辑规则：
 - 行号以「正文」列表里每行前面的数字为准，一次最多动 8 行；不要整篇重写，除非用户明确要求。
+- 「正文」里有些行是空的（段落之间的空行），它们也会占一个行号，但在版面上看不见。
+  改字、删行一律指到**有文字的那一行**，不要指到空行——指到空行等于什么都没改。
 - 只能润色、精简、补全用户已经给出的信息，绝不能编造学历、公司、时间、数字、奖项；缺少的信息用「待补充」占位。
 - 经历行的格式是「左侧 | 中间 | 右侧」，用 " | " 分隔，删除或改写时保持这个结构。
 - 保持中文表达自然、简短，每条要点不超过 60 字。
@@ -218,6 +252,136 @@ export function changesDigest(turns: AgentTurn[]) {
     else if (turn.rejected) out.push("（有一版方案被拒绝，简历未改）");
   }
   return out;
+}
+
+export const AGENT_JD_PROMPT = `
+## 当前任务：按 JD（岗位描述）优化这份简历
+
+用户粘了一份招聘 JD，你要让这份简历更贴合这个岗位。分两步走，每次只做一步：
+
+### 第一步：分析匹配度（用户还没选方向时做这一步）
+只输出分析，**不要给任何 actions**（actions 返回空数组）：
+{"reply":"","analysis":{"role":"岗位名称","musts":["JD 里硬性要求的技能/经验，3-6 条"],"matched":["简历里已经对上 JD 的点，引用原文关键词"],"gaps":["JD 要但简历没写或写得弱的点，2-6 条"],"advice":"一句话说建议怎么改"}}
+
+### 第二步：按用户选的方向改写（用户回复方向之后做这一步）
+用下面的动作改，**必须同时返回 analysis 为 null**：
+{"reply":"一句说明改了什么","analysis":null,"actions":[...]}
+
+改写硬规则：
+- **绝不编造**。学历、公司、学校、职位、时间、数字、奖项、证书，一个都不能虚构。
+- 只能做这些事：把已有经历换个说法去贴 JD 的关键词、调整要点顺序（JD 更要紧的放前面）、
+  精简啰嗦的句子、把散落的信息合并成一条有力度的要点、调整板块顺序把相关经历提前。
+- JD 要求但简历里**确实没有**的，不要编，而是在 reply 里用一句话告诉用户「XX 这块你简历里没有，
+  如果确实做过，建议补一条具体的」。
+- 改写要点时尽量复用 JD 里的原词（招聘方和筛选系统都在找这些词），但不要生硬堆砌，
+  一句话里最多落 2 个关键词。
+- 每个要点不超过 60 字，以结果/影响结尾（做了什么 + 达成什么）。
+- 一次最多改 8 行。
+- 经历行保持「左侧 | 中间 | 右侧」结构，用 " | " 分隔。
+
+### 动作怎么选（很重要）
+- 改某一行的文字：**只用 setText**，line 填「正文」列表里那一行前面的数字。
+  不要把整行原文放进 find 去 replace——原文里可能有换行、空格对不上，会匹配失败。
+- replace 只用于「一个词在全文多处出现、要统一换掉」这种场景。
+- **公司名、学校名、专业名、职位名、起止时间，一个字都不能改。**
+  即使 JD 要的是别的行业，也只能改描述它们的话，不能改它们本身。
+`;
+
+export interface JdAnalysis {
+  role: string;
+  musts: string[];
+  matched: string[];
+  gaps: string[];
+  advice: string;
+}
+
+// ---- 按 JD 改写时的事实保护 ----
+// 公司名、学校名、专业名、时间这些是「事实」，改一个字就是编造。
+// 模型偶尔会把整行原文塞进 replace 里去换写法，顺手把公司名也改了；
+// 这里在执行前拦一道，改到事实字段的一律跳过并告诉用户。
+
+const DATE_RE =
+  /\d{4}\s*[.\-/年]\s*\d{1,2}\s*([.\-/月]\s*\d{1,2}\s*)?[日]?\s*(—|-|–|~|至|到)?\s*(\d{4}\s*[.\-/年]\s*\d{1,2}\s*([.\-/月]\s*\d{1,2}\s*)?[日]?|至今|现在|present)?/gi;
+
+/** 从一段经历行里取出「不该被改」的片段：各栏内容 + 时间 */
+function factFragments(text: string): string[] {
+  return text
+    .split(" | ")
+    .flatMap((cell) => {
+      const times = cell.match(DATE_RE) || [];
+      const rest = cell
+        .replace(DATE_RE, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return [rest, ...times.map((t) => t.trim())];
+    })
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+}
+
+/**
+ * 判断一次改写是否动到了事实字段。
+ * 返回被改掉的事实片段（空数组表示没动到，可以放心执行）。
+ */
+export function pushedFacts(
+  before: string,
+  after: string,
+  kind: Kind,
+): string[] {
+  if (kind !== "entry" && kind !== "name") return [];
+  const kept = factFragments(before);
+  const now = after.replace(/\s+/g, " ");
+  return kept.filter((frag) => !now.includes(frag));
+}
+
+const strList = (value: unknown, cap = 6) =>
+  Array.isArray(value)
+    ? value
+        .filter((v) => typeof v === "string" && v.trim())
+        .map((v) => (v as string).trim().slice(0, 120))
+        .slice(0, cap)
+    : [];
+
+// 把模型返回的 analysis 收拾干净；任何一个字段都没有就当没给
+export function readAnalysis(value: unknown): JdAnalysis | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const analysis: JdAnalysis = {
+    role: typeof raw.role === "string" ? raw.role.trim().slice(0, 60) : "",
+    musts: strList(raw.musts),
+    matched: strList(raw.matched),
+    gaps: strList(raw.gaps),
+    advice: typeof raw.advice === "string" ? raw.advice.trim().slice(0, 300) : "",
+  };
+  const empty =
+    !analysis.role &&
+    !analysis.musts.length &&
+    !analysis.matched.length &&
+    !analysis.gaps.length &&
+    !analysis.advice;
+  return empty ? null : analysis;
+}
+
+// 按 JD 解析简历：第一步分析，第二部改写，共用一套动作协议
+export async function matchResumeToJd(
+  config: AgentConfig,
+  doc: Resume,
+  pageCount: number,
+  jd: string,
+  direction: string,
+  signal?: AbortSignal,
+): Promise<AgentReply> {
+  const system =
+    AGENT_SYSTEM_PROMPT +
+    AGENT_CONTENT_PROMPT +
+    "\n\n" +
+    AGENT_JD_PROMPT +
+    "\n\n当前简历参数与正文：\n" +
+    describeDoc(doc, pageCount, true);
+  const input = direction
+    ? `目标岗位 JD（原文）：\n<<<\n${jd.slice(0, 60000)}\n>>>\n\n我选的方向：${direction}\n请按这个方向改写简历。`
+    : `目标岗位 JD（原文）：\n<<<\n${jd.slice(0, 60000)}\n>>>\n\n先只做匹配度分析，不要改简历。`;
+  return requestAgent(config, system, [], input, signal);
 }
 
 export const AGENT_REVIEW_PROMPT = `你现在的任务是给一份「已经初排好」的简历调整格式。
@@ -445,6 +609,7 @@ export function parseAgentReply(text: string): AgentReply {
     const parsed = JSON.parse(cleaned.slice(start, end + 1)) as {
       reply?: unknown;
       actions?: unknown;
+      analysis?: unknown;
     };
     const actions = Array.isArray(parsed.actions)
       ? (parsed.actions.filter(
@@ -454,6 +619,7 @@ export function parseAgentReply(text: string): AgentReply {
     return {
       reply: String(parsed.reply || "已完成调整。"),
       actions: actions.slice(0, 12),
+      analysis: readAnalysis(parsed.analysis),
     };
   } catch {
     return { reply: cleaned.slice(0, 500), actions: [] };
@@ -634,10 +800,40 @@ export function applyAgentActions(
       next = { ...next, lines };
       notes.push(`删掉 ${removed} 个空行`);
     } else if (type === "setText") {
-      const at = lineNo(action.line, next.lines.length);
+      // 指到空行就换到最近的可见行：空行不渲染，改它等于没改
+      const at = aimedLine(next.lines, action.line);
       const text = typeof action.text === "string" ? action.text.slice(0, 2000) : "";
+      if (at === "same") {
+        skipped.push(`第 ${String(action.line)} 行附近全是空行，没有能改的文字`);
+        continue;
+      }
       if (at < 0) {
         skipped.push(`行号 ${String(action.line)} 不存在`);
+        continue;
+      }
+      const old = next.lines[at - 1];
+      if (old.kind === "blank") {
+        skipped.push(`第 ${at} 行是空行，界面上看不见，已跳过`);
+        continue;
+      }
+      // 板块标题和经历行不是「一句话」：往标题里塞正文，会把「实习经历」
+      // 整行换成一段工作描述，版式全乱。要改这类内容得用 setKind / insert。
+      if (old.kind === "section" || old.kind === "entry" || old.kind === "name") {
+        skipped.push(
+          `第 ${at} 行是${kindLabels[old.kind]}，不能直接改成正文；要加内容请用 insert 插一行`,
+        );
+        continue;
+      }
+      const broken = pushedFacts(old.text, text, old.kind);
+      if (broken.length) {
+        skipped.push(
+          `第 ${at} 行这次改写会动到「${broken[0]}」这类不改该的内容（学校/公司/时间），已跳过`,
+        );
+        continue;
+      }
+      // 改了但文字一模一样 = 界面不会变，报「改写」会让用户以为按钮坏了
+      if (old.text === text) {
+        skipped.push(`第 ${at} 行这次给的文字和原来一样，没有变化`);
         continue;
       }
       next = {
@@ -646,10 +842,10 @@ export function applyAgentActions(
       };
       notes.push(`改写第 ${at} 行`);
     } else if (type === "setKind") {
-      const at = lineNo(action.line, next.lines.length),
+      const at = aimedLine(next.lines, action.line, { includeBlank: true }),
         kind = String(action.kind || "") as Kind;
       const allowed: Kind[] = [...KINDS, "blank"];
-      if (at < 0 || !allowed.includes(kind)) {
+      if (at === "same" || at < 0 || !allowed.includes(kind)) {
         skipped.push(`第 ${at} 行的类型改不了`);
         continue;
       }
@@ -668,23 +864,37 @@ export function applyAgentActions(
         skipped.push("插入位置不合法");
         continue;
       }
+      // 落点修正只做「往后不要往前」：
+      // 指到空行时，放到下一个可见行前面（= 紧贴那句话上方），
+      // 绝不往前挪到上一句后面 —— 那会和模型的意图差一整行。
+      let host = after;
+      if (host > 0 && host < next.lines.length && next.lines[host - 1].kind === "blank") {
+        // 空行之后的那一行如果可见，就把新行插在它前面
+        host -= 1;
+        while (host + 1 < next.lines.length && next.lines[host].kind === "blank") host++;
+      }
       const line: Line = { id: uid(), kind, text };
       const lines = [...next.lines];
-      lines.splice(after, 0, line);
+      lines.splice(host, 0, line);
       next = { ...next, lines };
       notes.push(
-        after === 0
+        host === 0
           ? `在最前面插入一行${kindLabels[kind]}`
-          : `在第 ${after} 行后插入一行${kindLabels[kind]}`,
+          : `在第 ${host} 行后插入一行${kindLabels[kind]}`,
       );
     } else if (type === "remove") {
+      // 删行严格按原行号：空行删掉是合法的（用户就是想清空行），
+      // 但绝不能因为「第 4 行是空行」就顺手删掉第 3 行的正文。
       const at = lineNo(action.line, next.lines.length);
       if (at < 0) {
         skipped.push(`行号 ${String(action.line)} 不存在`);
         continue;
       }
+      const target = next.lines[at - 1];
       next = { ...next, lines: next.lines.filter((_, i) => i !== at - 1) };
-      notes.push(`删除第 ${at} 行`);
+      notes.push(
+        target.kind === "blank" ? `删掉第 ${at} 行的空行` : `删除第 ${at} 行`,
+      );
     } else if (type === "replace") {
       const find = typeof action.find === "string" ? action.find : "",
         to = typeof action.replace === "string" ? action.replace.slice(0, 2000) : "";
@@ -692,11 +902,24 @@ export function applyAgentActions(
         skipped.push("替换缺少原文");
         continue;
       }
+      // 先算出哪些行会被改到事实字段，改到的整行跳过，其余照常替换
+      const safe = (line: Line) => {
+        if (!line.text.includes(find)) return true;
+        const after = line.text.split(find).join(to);
+        const broken = pushedFacts(line.text, after, line.kind);
+        if (broken.length) {
+          skipped.push(
+            `替换「${find}」会动到「${broken[0]}」（学校/公司/时间这类），已跳过这一行`,
+          );
+          return false;
+        }
+        return true;
+      };
       let count = 0;
       next = {
         ...next,
         lines: next.lines.map((line) => {
-          if (!line.text.includes(find)) return line;
+          if (!line.text.includes(find) || !safe(line)) return line;
           count += line.text.split(find).length - 1;
           return { ...line, text: line.text.split(find).join(to) };
         }),

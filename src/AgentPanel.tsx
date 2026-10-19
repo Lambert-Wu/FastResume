@@ -18,6 +18,7 @@ import {
   compactHistory,
   describeDoc,
   isReviewAction,
+  matchResumeToJd,
   reviewLayout,
   turnsKey,
   loadAgentConfig,
@@ -30,6 +31,7 @@ import type {
   AgentConfig,
   AgentSummary,
   AgentTurn,
+  JdAnalysis,
 } from "./agent";
 import { layoutSteps, textToLines } from "./importText";
 
@@ -42,6 +44,17 @@ const EXAMPLES = [
   "行距松一点，看着更透气",
 ];
 const summaryKey = (docId: string) => `diyjobresume.agent.summary.v1.${docId}`;
+// JD 按简历分开存：每份简历通常投不同岗位，不该串台
+const jdKey = (docId: string) => `diyjobresume.agent.jd.v1.${docId}`;
+const JD_MAX = 20000;
+
+function loadJd(docId: string): string {
+  try {
+    return localStorage.getItem(jdKey(docId)) || "";
+  } catch {
+    return "";
+  }
+}
 
 function loadSummary(docId: string): AgentSummary {
   try {
@@ -120,8 +133,20 @@ export function AgentPanel({
     [setupOpen, setSetupOpen] = useState(() => !loadAgentConfig().apiKey),
     [agreed, setAgreed] = useState(noticeAccepted),
     [input, setInput] = useState(""),
-    [tab, setTab] = useState<"chat" | "paste">("chat"),
+    [tab, setTab] = useState<"chat" | "jd" | "paste">("chat"),
     [pasteText, setPasteText] = useState(""),
+    // 「按 JD 优化」的独立状态：和对话互不干扰，关掉面板也不会丢
+    [jdText, setJdText] = useState(() => loadJd(docId)),
+    [jdStage, setJdStage] = useState<"idle" | "analyzing" | "choosing" | "writing">(
+      "idle",
+    ),
+    [analysis, setAnalysis] = useState<JdAnalysis | null>(null),
+    [direction, setDirection] = useState(""),
+    [jdDone, setJdDone] = useState<{
+      before: Resume;
+      summary: string;
+      gaps: string[];
+    } | null>(null),
     [running, setRunning] = useState(false),
     [percent, setPercent] = useState(0),
     [layoutResult, setLayoutResult] = useState<{
@@ -169,6 +194,15 @@ export function AgentPanel({
       /* 存不下不影响使用 */
     }
   }, [summary, docId]);
+
+  useEffect(() => {
+    try {
+      if (jdText.trim()) localStorage.setItem(jdKey(docId), jdText);
+      else localStorage.removeItem(jdKey(docId));
+    } catch {
+      /* 存不下不影响使用 */
+    }
+  }, [jdText, docId]);
 
   const drag = (e: ReactPointerEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
@@ -470,6 +504,114 @@ export function AgentPanel({
     setTestResult("");
   };
 
+  // ---- 按 JD 优化 ----
+  const jdReady = Boolean(config.apiKey.trim() && config.model.trim());
+
+  const runJd = async (wanted: string) => {
+    const jd = jdText.trim();
+    if (!jd || jdStage === "analyzing" || jdStage === "writing") return;
+    if (!jdReady) {
+      setSetupOpen(true);
+      setError("先填好接口地址、模型名和 Key，再点保存。");
+      return;
+    }
+    setError("");
+    setJdStage(wanted ? "writing" : "analyzing");
+    // 上一版还没接受就开始新的一轮 → 先清掉待确认状态，避免串台
+    if (pending) {
+      markRejected(pending.turnAt);
+      setPending(null);
+      onClearPreview();
+    }
+    const before = doc;
+    const controller = new AbortController(),
+      timer = window.setTimeout(() => controller.abort(), 120000);
+    try {
+      const reply = await matchResumeToJd(
+        config,
+        doc,
+        pageCount,
+        jd,
+        wanted,
+        controller.signal,
+      );
+      if (!wanted) {
+        setAnalysis(reply.analysis ?? null);
+        setDirection("");
+        setJdStage("choosing");
+        if (!reply.analysis)
+          setError("模型没有返回岗位分析，可以再点一次「分析这个岗位」。");
+        return;
+      }
+      // 模型有时只写一句「我改好了」却不给动作，和对话一样补一次提醒
+      let result = reply;
+      if (!result.actions.length) {
+        try {
+          result = await matchResumeToJd(
+            config,
+            doc,
+            pageCount,
+            jd,
+            `${wanted}\n（上一次你只回了文字，没有给 actions。这次必须给出 setText 等动作，line 用正文列表里的行号。）`,
+            controller.signal,
+          );
+        } catch {
+          /* 补试失败就用第一次的结果 */
+        }
+      }
+      if (result.actions.length) {
+        const applied = applyAgentActions(doc, result.actions);
+        // 走和对话一样的「先预览、再接受」流程，不直接改简历
+        setPending({
+          actions: result.actions,
+          notes: applied.notes,
+          skipped: applied.skipped,
+          turnAt: -1,
+        });
+        if (applied.notes.length) onPreview(applied.doc);
+        setJdDone({
+          before,
+          // 以「实际执行结果」为准，不能直接信模型的自述：
+          // 模型常常说「改了 3 处」，实际动作一条都没落地
+          summary: applied.notes.length
+            ? result.reply || `按 JD 调整了 ${applied.notes.length} 处`
+            : "这次没能落地任何改动，原因见下方。可以换个说法再说一次，或直接在左边手动改。",
+          gaps: (result.analysis ?? analysis)?.gaps ?? [],
+        });
+      } else {
+        setJdDone({
+          before,
+          summary:
+            result.reply || "按当前简历内容，已经没有可以进一步贴合的地方了。",
+          gaps: (result.analysis ?? analysis)?.gaps ?? [],
+        });
+      }
+      setJdStage("choosing");
+    } catch (e) {
+      setError(errorText(e));
+      setJdStage(analysis ? "choosing" : "idle");
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  const undoJd = () => {
+    if (!jdDone) return;
+    onApply(jdDone.before);
+    setJdDone(null);
+    onClearPreview();
+    registerPreviewApi(null);
+    setPending(null);
+  };
+
+  const resetJd = () => {
+    setAnalysis(null);
+    setDirection("");
+    setJdStage("idle");
+    setJdDone(null);
+    setError("");
+  };
+
   return (
     <div
       className={`agent-panel${docked ? " agent-docked" : ""}`}
@@ -568,6 +710,14 @@ export function AgentPanel({
         </button>
         <button
           role="tab"
+          aria-selected={tab === "jd"}
+          className={tab === "jd" ? "active" : ""}
+          onClick={() => setTab("jd")}
+        >
+          按 JD 优化
+        </button>
+        <button
+          role="tab"
           aria-selected={tab === "paste"}
           className={tab === "paste" ? "active" : ""}
           onClick={() => setTab("paste")}
@@ -601,6 +751,135 @@ export function AgentPanel({
           {busy && (
             <div className="agent-msg assistant agent-thinking">
               正在生成排版方案…
+            </div>
+          )}
+        </div>
+      ) : tab === "jd" ? (
+        <div className="agent-jd">
+          <label className="agent-jd-label">
+            <span>把招聘 JD 粘贴到这里</span>
+            <textarea
+              value={jdText}
+              onChange={(e) => setJdText(e.target.value.slice(0, JD_MAX))}
+              disabled={jdStage === "analyzing" || jdStage === "writing"}
+              spellCheck={false}
+              placeholder={"岗位名称、职责、任职要求都可以整段贴进来，贴多点分析更准"}
+              aria-label="粘贴招聘 JD"
+              rows={6}
+            />
+          </label>
+          <div className="agent-paste-actions">
+            <span className="agent-paste-count">
+              {jdText.trim()
+                ? `${jdText.trim().length} 字`
+                : "等待粘贴"}
+            </span>
+            <button
+              className="primary"
+              disabled={
+                !jdText.trim() ||
+                jdStage === "analyzing" ||
+                jdStage === "writing"
+              }
+              onClick={() => void runJd("")}
+            >
+              {jdStage === "analyzing" ? "分析中…" : "分析这个岗位"}
+            </button>
+          </div>
+
+          {analysis && (
+            <section className="agent-jd-card">
+              <strong>{analysis.role || "目标岗位"}</strong>
+              {analysis.musts.length > 0 && (
+                <>
+                  <p className="agent-jd-sub">岗位要什么</p>
+                  <ul className="agent-jd-list">
+                    {analysis.musts.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {analysis.matched.length > 0 && (
+                <>
+                  <p className="agent-jd-sub good">你简历里已经对上的</p>
+                  <ul className="agent-jd-list good">
+                    {analysis.matched.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {analysis.gaps.length > 0 && (
+                <>
+                  <p className="agent-jd-sub gap">还差一些 / 写得不够</p>
+                  <ul className="agent-jd-list gap">
+                    {analysis.gaps.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {analysis.advice && (
+                <p className="agent-skip">建议：{analysis.advice}</p>
+              )}
+            </section>
+          )}
+
+          {analysis && (
+            <div className="agent-jd-actions">
+              <button
+                className="primary"
+                disabled={jdStage === "writing" || jdStage === "analyzing"}
+                onClick={() =>
+                  void runJd(
+                    direction.trim() ||
+                      "按上面的分析，把简历改得更贴合这个岗位",
+                  )
+                }
+              >
+                {jdStage === "writing" ? "改写中…" : "按这个方向改写"}
+              </button>
+              <button
+                disabled={jdStage === "writing" || jdStage === "analyzing"}
+                onClick={() => void runJd("")}
+              >
+                重新分析
+              </button>
+            </div>
+          )}
+
+          {analysis && (
+            <label className="agent-jd-label">
+              <span>想怎么改？可以补充一句（不填就按上面的建议改）</span>
+              <input
+                value={direction}
+                onChange={(e) => setDirection(e.target.value.slice(0, 200))}
+                placeholder="例如：重点突出数据成果，别动教育背景"
+                spellCheck={false}
+              />
+            </label>
+          )}
+
+          {jdDone && (
+            <div className="agent-done">
+              <div className="agent-jd-done">
+                <span>{jdDone.summary}</span>
+                {jdDone.gaps.length > 0 && (
+                  <span className="agent-jd-gaps">
+                    简历里还缺：{jdDone.gaps.join("；")}
+                    （这些不会编，确实做过就自己补一条）
+                  </span>
+                )}
+              </div>
+              <div className="agent-done-actions">
+                <button onClick={resetJd} title="重新贴 JD">
+                  换 JD
+                </button>
+                <button onClick={undoJd} title="回到改写前的样子">
+                  撤销
+                </button>
+              </div>
             </div>
           )}
         </div>

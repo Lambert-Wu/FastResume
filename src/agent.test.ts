@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_CONTENT_PROMPT,
+  AGENT_JD_PROMPT,
   AGENT_SYSTEM_PROMPT,
   applyAgentActions,
   buildAgentMessages,
@@ -10,6 +11,7 @@ import {
   estimateTokens,
   isReviewAction,
   parseAgentReply,
+  pushedFacts,
   reviewLayout,
   stripStructure,
 } from "./agent";
@@ -122,19 +124,114 @@ describe("agent content actions", () => {
     expect(next.skipped).toHaveLength(2);
   });
   it("replaces text across the whole document", () => {
+    // 用小标题里的词做替换：不涉及学校/公司/时间这类事实字段
     const next = applyAgentActions(doc(), [
-      { type: "replace", find: "示例", replace: "样例" },
+      { type: "replace", find: "实习经历", replace: "实习经验" },
     ]);
     const text = toMarkdown(next.doc.lines);
-    expect(text).toContain("样例大学");
-    expect(text).not.toContain("示例大学");
-    expect(next.notes[0]).toContain("2 处");
+    expect(text).toContain("## 实习经验");
+    expect(text).not.toContain("## 实习经历");
+    expect(next.notes[0]).toContain("1 处");
+  });
+  it("改到事实字段的替换会被拦下（不许改学校名）", () => {
+    const next = applyAgentActions(doc(), [
+      { type: "replace", find: "示例大学", replace: "清华大学" },
+    ]);
+    expect(toMarkdown(next.doc.lines)).toContain("示例大学");
+    expect(next.notes).toHaveLength(0);
+    expect(next.skipped.join()).toMatch(/学校\/公司\/时间|不该改/);
   });
   it("changes a line kind", () => {
     const next = applyAgentActions(doc(), [
       { type: "setKind", line: 5, kind: "section" },
     ]);
     expect(next.doc.lines[4].kind).toBe("section");
+  });
+});
+
+// 空行在版面上不渲染（paginate 里被 filter 掉），所以「改一个空行」= 界面毫无变化。
+// 这一组测试锁住：模型指到空行时，必须落到看得见的那一行，或者明确报「没改」。
+describe("空行不会变成看不见的改动", () => {
+  // 1 姓名、2 空、3 联系方式、4 空、5 板块标题、6 空、7 要点
+  const withBlanks = () => {
+    const resume = initialResume();
+    resume.lines = parseMarkdown(
+      "# 张三\n\n138 0000 2468\n\n## 实习经历\n\n- 原来的要点",
+    );
+    return resume;
+  };
+
+  it("指到空行时，改到它前面最近的那一行", () => {
+    const before = withBlanks();
+    expect(before.lines[3].kind).toBe("blank");
+    // 第 4 行是空行，往前最近的是第 3 行联系方式（不是姓名，姓名是事实字段）
+    const next = applyAgentActions(before, [
+      { type: "setText", line: 4, text: "138 0000 2468 | mail@example.com" },
+    ]);
+    expect(next.doc.lines[2].text).toBe("138 0000 2468 | mail@example.com");
+    expect(next.doc.lines[3].kind).toBe("blank");
+    expect(next.doc.lines[3].text).toBe("");
+    expect(next.notes).toHaveLength(1);
+  });
+
+  it("文档开头连续空行时，往后找第一个可见行", () => {
+    const resume = initialResume();
+    resume.lines = parseMarkdown("\n\n# 张三\n- 第一条");
+    const next = applyAgentActions(resume, [
+      { type: "setText", line: 2, text: "第一条（改过）" },
+    ]);
+    // 往前没有行，往后第一个可见行是第 3 行姓名，不允许被改成一句正文
+    expect(next.notes).toHaveLength(0);
+    expect(next.skipped.join()).toMatch(/表头|不改该/);
+  });
+
+  it("全文都是空行时如实报跳过，不假装改过", () => {
+    const resume = initialResume();
+    resume.lines = parseMarkdown("\n\n\n");
+    const next = applyAgentActions(resume, [
+      { type: "setText", line: 2, text: "随便" },
+    ]);
+    expect(next.notes).toHaveLength(0);
+    expect(next.skipped.join()).toContain("空行");
+  });
+
+  it("内容没变时不计入改动", () => {
+    const before = withBlanks();
+    const next = applyAgentActions(before, [
+      { type: "setText", line: 3, text: "138 0000 2468" },
+    ]);
+    expect(next.notes).toHaveLength(0);
+    expect(next.skipped.join()).toContain("没有变化");
+  });
+
+  it("删空行就是删空行，不会顺手删掉它前面的正文", () => {
+    // 这是一个真踩过的坑：如果把「行号 → 最近的可见行」套到 remove 上，
+    // 「删第 4 行空行」会变成「删第 3 行联系方式」，凭空丢内容。
+    const before = withBlanks();
+    const next = applyAgentActions(before, [{ type: "remove", line: 4 }]);
+    expect(next.doc.lines).toHaveLength(before.lines.length - 1);
+    expect(toMarkdown(next.doc.lines)).toContain("138 0000 2468");
+    expect(next.notes.join()).toContain("空行");
+  });
+
+  it("插入点只往后修正，不往前挪", () => {
+    const before = withBlanks();
+    // 第 4 行是空行，「在第 4 行后插入」应紧贴第 5 行板块标题的上方
+    const next = applyAgentActions(before, [
+      { type: "insert", after: 4, kind: "bullet", text: "新加的要点" },
+    ]);
+    const texts = next.doc.lines.map((l) => l.text);
+    expect(texts.indexOf("新加的要点")).toBe(texts.indexOf("实习经历") - 1);
+    // 绝不能跑到联系方式上面去
+    expect(texts.indexOf("新加的要点")).toBeGreaterThan(
+      texts.indexOf("138 0000 2468"),
+    );
+  });
+
+  it("给模型看的正文里，空行要显式标出来", () => {
+    const text = describeDoc(withBlanks(), 1, true);
+    expect(text).toContain("2: （空行）");
+    expect(text).toContain("不要指它们");
   });
 });
 
@@ -376,5 +473,113 @@ describe("prompt context", () => {
     expect(withContent).toContain("3: ## 教育背景");
     expect(withContent).toContain("主修课程");
     expect(AGENT_CONTENT_PROMPT).toContain("setText");
+  });
+});
+
+describe("按 JD 优化", () => {
+  it("解析出匹配度分析的四个部分", () => {
+    const reply = parseAgentReply(
+      JSON.stringify({
+        reply: "",
+        actions: [],
+        analysis: {
+          role: "高级前端工程师",
+          musts: ["3 年以上 React 经验", "熟悉性能优化"],
+          matched: ["简历里写了 React 项目"],
+          gaps: ["没写团队规模", "缺英文能力描述"],
+          advice: "把项目里的性能数据提到前面",
+        },
+      }),
+    );
+    expect(reply.analysis?.role).toBe("高级前端工程师");
+    expect(reply.analysis?.musts).toHaveLength(2);
+    expect(reply.analysis?.gaps).toEqual(["没写团队规模", "缺英文能力描述"]);
+    expect(reply.actions).toHaveLength(0);
+  });
+
+  it("第二步只有动作没有分析时，analysis 为空", () => {
+    const reply = parseAgentReply(
+      '{"reply":"把性能数据提上去了","analysis":null,"actions":[{"type":"setText","line":4,"text":"x"}]}',
+    );
+    expect(reply.analysis).toBeNull();
+    expect(reply.actions).toHaveLength(1);
+  });
+
+  it("普通对话不返回 analysis，不会误判", () => {
+    const reply = parseAgentReply(
+      '{"reply":"已收紧行距","actions":[{"type":"lineHeight","value":1.35}]}',
+    );
+    expect(reply.analysis).toBeFalsy();
+  });
+
+  it("字段类型不对时丢字段而不是整段崩掉", () => {
+    const reply = parseAgentReply(
+      JSON.stringify({
+        reply: "ok",
+        actions: [],
+        analysis: { role: 123, musts: "不是数组", matched: [null, " 有效 "], gaps: [], advice: {} },
+      }),
+    );
+    expect(reply.analysis?.role).toBe("");
+    expect(reply.analysis?.musts).toEqual([]);
+    expect(reply.analysis?.matched).toEqual(["有效"]);
+    expect(reply.analysis?.advice).toBe("");
+  });
+
+  it("analysis 全空时当作没给，避免空卡片", () => {
+    const reply = parseAgentReply(
+      JSON.stringify({ reply: "ok", actions: [], analysis: { role: "", musts: [] } }),
+    );
+    expect(reply.analysis).toBeNull();
+  });
+
+  it("提示词里写死了「不许编造」和两步走的约束", () => {
+    expect(AGENT_JD_PROMPT).toContain("绝不编造");
+    expect(AGENT_JD_PROMPT).toContain("第一步");
+    expect(AGENT_JD_PROMPT).toContain("第二步");
+  });
+
+  it("经历行只改描述、不动公司名和时间，可以放行", () => {
+    const entry = "东京控股股份有限公司 | 研发部 | 2026.04 — 2026.07";
+    const rewritten =
+      "东京控股股份有限公司 | 研发部（React 性能优化） | 2026.04 — 2026.07";
+    expect(pushedFacts(entry, rewritten, "entry")).toEqual([]);
+  });
+
+  it("把公司名换掉会被判定为动了事实", () => {
+    const entry = "东京控股股份有限公司 | 研发部 | 2026.04 — 2026.07";
+    const bad = "字节跳动 | 研发部 | 2026.04 — 2026.07";
+    expect(pushedFacts(entry, bad, "entry").length).toBeGreaterThan(0);
+  });
+
+  it("把时间改掉会被判定为动了事实", () => {
+    const entry = "吉林大学 | 计算机科学与技术 | 2023.09 - 2027.07";
+    const bad = "吉林大学 | 计算机科学与技术 | 2020.09 - 2024.07";
+    expect(pushedFacts(entry, bad, "entry").length).toBeGreaterThan(0);
+  });
+
+  it("普通要点行不套事实保护，可以自由改写", () => {
+    const bullet = "参与 AI 信审后端链路建设";
+    const rewritten = "主导 AI 信审链路建设，支撑日均 10 万次调用";
+    expect(pushedFacts(bullet, rewritten, "bullet")).toEqual([]);
+  });
+
+  it("setText 改到事实时会被 applyAgentActions 拦下", () => {
+    const next = applyAgentActions(doc(), [
+      { type: "setText", line: 4, text: "北京大学" },
+    ]);
+    expect(toMarkdown(next.doc.lines)).toContain("示例大学");
+    expect(next.notes).toHaveLength(0);
+    // 经历行（学校 | 专业 | 时间）整行不允许被 setText 改成一句正文
+    expect(next.skipped.join()).toMatch(/经历信息|不该改|不改该/);
+  });
+
+  it("往板块标题里塞正文会被拦下", () => {
+    const next = applyAgentActions(doc(), [
+      { type: "setText", line: 3, text: "主导某系统性能优化，响应从 820ms 降到 240ms" },
+    ]);
+    expect(next.notes).toHaveLength(0);
+    expect(toMarkdown(next.doc.lines)).toContain("## 教育背景");
+    expect(next.skipped.join()).toContain("板块标题");
   });
 });

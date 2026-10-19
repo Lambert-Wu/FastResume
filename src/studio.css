@@ -2938,3 +2938,107 @@ a {
   background: #fdf6f0;
 }
 
+/* ---- 按 JD 优化 ---- */
+.agent-jd {
+  flex: 1;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow: auto;
+}
+.agent-jd-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #8b8177;
+}
+.agent-jd-label textarea,
+.agent-jd-label input {
+  width: 100%;
+  border: 1px solid #ded7cc;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  font-family: inherit;
+  background: #fff;
+  color: #33312e;
+}
+.agent-jd-label textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+.agent-jd-label input:focus,
+.agent-jd-label textarea:focus {
+  outline: 2px solid #d8c3b0;
+  outline-offset: 0;
+}
+.agent-jd-card {
+  border: 1px solid #e4d8ca;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fffdf9;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+.agent-jd-card strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6d4938;
+}
+.agent-jd-sub {
+  margin: 3px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: #9b9187;
+}
+.agent-jd-sub.good {
+  color: #5c7a4e;
+}
+.agent-jd-sub.gap {
+  color: #a8613f;
+}
+.agent-jd-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #5a5047;
+  line-height: 1.55;
+}
+.agent-jd-list.good li::marker {
+  color: #7d9b6b;
+}
+.agent-jd-list.gap li::marker {
+  color: #c08361;
+}
+.agent-jd-actions {
+  display: flex;
+  gap: 6px;
+}
+.agent-jd-actions button {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.agent-jd-done {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.agent-jd-gaps {
+  color: #8b7a6a;
+  line-height: 1.5;
+}
+.agent-done-actions {
+  display: flex;
+  gap: 5px;
+  flex: none;
+}
+
