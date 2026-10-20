@@ -165,3 +165,7 @@ _console.py
 _dbg_state.py
 _jd_*.py
 _p_*.js
+_smart_probe.py
+_shot*.py
+_shot*.png
+_smart_out.json

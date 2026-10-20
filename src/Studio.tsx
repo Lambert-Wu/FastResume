@@ -16,6 +16,7 @@ import {
   SlidersHorizontal,
   ImagePlus,
   GraduationCap,
+  BetweenVerticalStart,
   X,
   Plus,
   GripVertical,
@@ -58,6 +59,7 @@ import type {
   Template,
 } from "./flow";
 import { lineHtml, editableText, fonts, rowStyle } from "./render";
+import { describeFit, fitOnePage } from "./smartFit";
 import { SelectionTools, paragraphOptions } from "./SelectionTools";
 import { withColumns } from "./formatting";
 import { NumericInput, holdDrag } from "./interaction";
@@ -885,6 +887,29 @@ export default function Studio() {
     headerContactHeight,
     contactId,
   ]);
+  /**
+   * 智能一页：内容和一页比多了就收紧、少了就撑开，目标是刚好排满一页。
+   * 只改排版参数，走 historyUpdate，所以 Ctrl+Z 一下就能还原。
+   */
+  const smartPage = () => {
+    const node = measureHost();
+    if (!node) return;
+    const base = ref.current;
+    const measure = (s: Settings, line: Line, text: string, continued: boolean) =>
+      measureRow(
+        node,
+        s,
+        base.template,
+        line.id === contactId,
+        line,
+        text,
+        continued,
+      );
+    const fit = fitOnePage(base.settings, base.lines, PAGE.height, measure);
+    if (fit.changed)
+      historyUpdate({ ...base, settings: fit.settings }, "smart-page");
+    setNotice(describeFit(fit));
+  };
   useLayoutEffect(() => {
     if (preview && previewReveal.current) {
       previewReveal.current = false;
@@ -1992,6 +2017,14 @@ export default function Studio() {
                 {Math.round(zoom * 100)}%
               </button>
               <span className="page-count">A4 · {pages.length} 页</span>
+              <button
+                className="smart-page"
+                onClick={smartPage}
+                title="自动排成刚好一页：超出的收一收，不满的撑一撑（可撤销）"
+              >
+                <BetweenVerticalStart size={13} />
+                智能一页
+              </button>
             </div>
             <div className="format-toolbar">
               <button
@@ -2886,6 +2919,8 @@ export default function Studio() {
                   <b>6. 预览区（中间）：</b>
                   纸张就是 A4（794×1123px），缩放只改显示大小、不改变排版，所以预览和导出 PDF 一致。
                   内容变多会自动续页，单条太长会切到下一页继续。
+                  纸张上方的 <b>智能一页</b> 一键把内容排成刚好一页：超出的收紧字号和间距，
+                  不满的把字放大、间距拉开；调过头了 <code>Ctrl+Z</code> 就回去。
                   工具栏的图片按钮可以上传照片或校徽，拖到合适位置，右下角拉大小。
                 </p>
                 <p>

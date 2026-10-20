@@ -416,6 +416,12 @@ a {
   margin-bottom: 12px;
   color: #86867e;
   font-size: 11px;
+  /* 窄屏时让「智能一页」整颗换行，而不是把滑块挤成一小截、把标签挤成两行 */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.zoom-control > span {
+  white-space: nowrap;
 }
 .zoom-control input {
   padding: 0;
@@ -434,6 +440,28 @@ a {
 }
 .page-count {
   white-space: nowrap;
+}
+/* 智能一页：紧跟在页数后面，点了就把内容压/撑到刚好一页 */
+.zoom-control .smart-page {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid #ded9d1;
+  border-radius: 999px;
+  background: #fbfaf8;
+  color: #7a5a48;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.zoom-control .smart-page:hover {
+  background: #f4e9e3;
+  border-color: #c68c72;
+  color: #a4402f;
+}
+.zoom-control .smart-page:active {
+  transform: translateY(0.5px);
 }
 .format-toolbar {
   display: flex;
