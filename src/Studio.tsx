@@ -1967,7 +1967,7 @@ export default function Studio() {
               setLeftWidth((w) => Math.min(window.innerWidth * 0.6, w + 20));
           }}
         >
-          <GripVertical size={14} strokeWidth={2} />
+          <GripVertical size={12} />
         </div>
           </>
         )}
@@ -2325,7 +2325,7 @@ export default function Studio() {
                 setRightWidth((w) => Math.max(220, w - 20));
             }}
           >
-            <GripVertical size={14} strokeWidth={2} />
+            <GripVertical size={12} />
           </div>
         )}
         {agentOpen ? (
