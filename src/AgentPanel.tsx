@@ -90,6 +90,9 @@ function loadTurns(docId: string): AgentTurn[] {
               ? t.notes.filter((n) => typeof n === "string")
               : undefined,
             rejected: t.rejected === true || undefined,
+            choices: Array.isArray(t.choices)
+              ? t.choices.filter((c) => typeof c === "string" && c.trim())
+              : undefined,
           }))
       : [];
   } catch {
@@ -171,6 +174,11 @@ export function AgentPanel({
     y: 96,
   }));
   const logRef = useRef<HTMLDivElement>(null);
+  // 只有最后一条助手发言上的选项能点：再往后接了一轮新对话，说明那次反问已经答过了
+  const lastAssistantAt = turns.reduce(
+    (last, t, i) => (t.role === "assistant" ? i : last),
+    -1,
+  );
 
   useEffect(() => {
     const el = logRef.current;
@@ -275,7 +283,9 @@ export function AgentPanel({
     signal: AbortSignal,
   ) => {
     const first = await requestAgent(config, system, history, question, signal);
-    if (first.actions.length) return first;
+    // 反问（只给 choices 不给动作）也是这一轮的正式回答，不能当成“没给动作”去重试，
+    // 否则会把「我该问清楚」硬掰成「必须给个动作」，反问就永远出不来。
+    if (first.actions.length || first.choices.length) return first;
     const retry = await requestAgent(
       config,
       system + "\n\n重要：必须只输出一个 JSON 对象，并在 actions 里给出动作数组。",
@@ -287,8 +297,8 @@ export function AgentPanel({
     return retry.actions.length ? retry : first;
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (said?: string) => {
+    const text = (said ?? input).trim();
     if (!text || busy) return;
     if (!config.apiKey.trim() || !config.model.trim()) {
       setSetupOpen(true);
@@ -347,7 +357,11 @@ export function AgentPanel({
       const reply = await askModel(withMemory, recent, text, controller.signal);
       setTurns((all) => [
         ...all,
-        { role: "assistant", text: reply.reply },
+        {
+          role: "assistant",
+          text: reply.reply,
+          choices: reply.choices.length ? reply.choices : undefined,
+        },
       ]);
       if (reply.actions.length) {
         const applied = applyAgentActions(doc, reply.actions);
@@ -746,6 +760,20 @@ export function AgentPanel({
           {turns.map((turn, index) => (
             <div key={index} className={`agent-msg ${turn.role}`}>
               {turn.text}
+              {turn.role === "assistant" && turn.choices?.length ? (
+                <div className="agent-choices">
+                  {turn.choices.map((choice) => (
+                    <button
+                      key={choice}
+                      type="button"
+                      disabled={busy || index !== lastAssistantAt}
+                      onClick={() => void send(choice)}
+                    >
+                      {choice}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ))}
           {busy && (

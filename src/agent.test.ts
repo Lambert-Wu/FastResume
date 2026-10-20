@@ -460,6 +460,66 @@ describe("agent reply parsing", () => {
     const reply = parseAgentReply("这个我需要你确认一下");
     expect(reply.reply).toBe("这个我需要你确认一下");
     expect(reply.actions).toHaveLength(0);
+    expect(reply.choices).toEqual([]);
+  });
+});
+
+describe("话没听清时给选项", () => {
+  const ask = (choices: unknown, actions: unknown[] = []) =>
+    parseAgentReply(JSON.stringify({ reply: "你想调哪一处？", actions, choices }));
+
+  it("把我这次要反问的候选项读出来", () => {
+    const reply = ask(["把整体字号调小一点", "只把段间距收紧", "换个更简洁的模板"]);
+    expect(reply.choices).toEqual([
+      "把整体字号调小一点",
+      "只把段间距收紧",
+      "换个更简洁的模板",
+    ]);
+    expect(reply.actions).toHaveLength(0);
+  });
+
+  it("最多只留 4 个：选项多了点不过来，也会把面板撑爆", () => {
+    const reply = ask(["一", "二", "三", "四", "五", "六"]);
+    expect(reply.choices).toEqual(["一", "二", "三", "四"]);
+  });
+
+  it("丢掉空串、非字符串、重复项和长得像一段话的", () => {
+    const reply = ask([
+      "  ",
+      123,
+      "换成学术风",
+      "换成学术风",
+      "这句话明显太长了，用户根本不会照着念一遍，放进按钮里也会换行成一坨，所以应该被丢掉才对啊",
+    ]);
+    expect(reply.choices).toEqual(["换成学术风"]);
+  });
+
+  it("已经在动手改的这一轮不再给选项", () => {
+    // 又要预览又要选择，用户会不知道先点哪个
+    const reply = ask(["换成学术风"], [{ type: "lineHeight", value: 1.4 }]);
+    expect(reply.actions).toHaveLength(1);
+    expect(reply.choices).toEqual([]);
+  });
+
+  it("模型写成 options 也认", () => {
+    const reply = parseAgentReply(
+      JSON.stringify({ reply: "说具体点？", actions: [], options: ["收紧段距"] }),
+    );
+    expect(reply.choices).toEqual(["收紧段距"]);
+  });
+
+  it("没给选项时是空数组，界面上不会冒出空的一排按钮", () => {
+    expect(ask(undefined).choices).toEqual([]);
+    expect(ask("不是数组").choices).toEqual([]);
+  });
+
+  it("提示词里写清了什么时候该问、什么时候别问", () => {
+    expect(AGENT_SYSTEM_PROMPT).toContain("该反问");
+    expect(AGENT_SYSTEM_PROMPT).toContain("actions 必须是空数组");
+    // 「删空行」这种有两层意思的说法，点名要问
+    expect(AGENT_SYSTEM_PROMPT).toContain("删空行");
+    // 但也不能事事都问
+    expect(AGENT_SYSTEM_PROMPT).toContain("别为了保险每次都问");
   });
 });
 

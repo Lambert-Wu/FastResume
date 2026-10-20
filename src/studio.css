@@ -2308,6 +2308,42 @@ a {
   color: #3c3833;
   max-width: 92%;
 }
+/* 反问时给的候选项：做成能直接点的胶囊，点一下就等于用户把这句话说了出来。
+   .agent-msg 是 pre-wrap，这里必须恢复，否则按钮里的空白会被按原样撑开 */
+.agent-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  white-space: normal;
+}
+.agent-choices button {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid #d8cfc2;
+  background: #fdfbf8;
+  color: #4a3a2d;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-choices button:hover:not(:disabled),
+.agent-choices button:focus-visible:not(:disabled) {
+  background: #f3e9df;
+  border-color: #c68c72;
+  color: #a4402f;
+  outline: none;
+}
+.agent-choices button:active:not(:disabled) {
+  background: #ecdfd2;
+}
+/* 已经答过（或正在生成）就把选项压暗：避免对着旧问题反复点 */
+.agent-choices button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .agent-thinking {
   color: #93887d;
 }

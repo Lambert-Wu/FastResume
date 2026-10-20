@@ -27,12 +27,16 @@ export interface AgentTurn {
   notes?: string[];
   /** 用户没有接受这一轮方案 */
   rejected?: boolean;
+  /** 这一轮助手反问时给出的候选回答，界面上做成可点的按钮 */
+  choices?: string[];
 }
 export interface AgentReply {
   reply: string;
   actions: AgentAction[];
   /** 「按 JD 优化」第一步返回的匹配度分析；普通对话和改写步骤都是 undefined */
   analysis?: JdAnalysis | null;
+  /** 话没听清/有多种改法时，给用户几个能直接点的回答；有它就说明这一轮故意不动手 */
+  choices: string[];
 }
 export type AgentAction = { type?: string } & Record<string, unknown>;
 
@@ -193,6 +197,8 @@ export const AGENT_SYSTEM_PROMPT = `你是简历助手。用户会用中文描�
 
 只输出一个 JSON 对象，不要输出别的文字、不要用 markdown 代码块：
 {"reply":"一句中文说明你做了什么","actions":[动作对象...]}
+听不清时用这个形状反问（actions 留空）：
+{"reply":"一句说明你为什么不敢猜","actions":[],"choices":["用户可以直接点的一句话","再给一个"]}
 
 可用动作（actions 是数组，按顺序执行）：
 1 {"type":"template","template":"blue|black|ribbon|academic|teal|violet"} 换模板
@@ -219,7 +225,26 @@ export const AGENT_SYSTEM_PROMPT = `你是简历助手。用户会用中文描�
 - 一次最多给 6 个动作，不要重复堆叠同一种动作。
 - 只要用户的要求能用上面的动作实现，就必须在 actions 里给出动作，不能只在 reply 里描述。
 - 你可以看到这段对话的历史，用户说“再紧一点”“刚才那个模板”“回到之前那样”时，按历史里已经应用过的改动为基准继续调整。
-- 如果请求和这份简历完全无关（闲聊、写代码等），actions 返回空数组，并在 reply 里说明你只处理这份简历。`;
+- 如果请求和这份简历完全无关（闲聊、写代码等），actions 返回空数组，并在 reply 里说明你只处理这份简历。
+
+什么时候该反问（用 choices 给选项），而不是硬猜：
+- 这句话能对应好几种改法，而且改法之间差很远，猜错用户就要白点一次「接受」。
+  例：“帮我弄好看点”（换模板？换配色？调字号？）、“简单一点”（删内容？还是排版变清爽？）、
+  “紧一点”（缩字号？收段距？减页边距？）、“颜色不太行”（换主题色？换正文色？）。
+- 用户用了指代，但历史里找不到对应物：“改成那个样式”“刚才那个颜色”“按上面说的来”。
+- 用户的说法在本项目里有两层意思，而他的真实意图决定完全不同的动作。
+  典型例子：“删空行”——文档里的空行不参与排版，删掉外观一点都不会变；
+  用户真正想要的大概率是“看上去空太多”，那该收段距。这种必须问清，不要直接删。
+- 缺关键信息，问一句就能补齐：要按 JD 改但没贴 JD、说要“换成我上次那个模板”却没说是哪个。
+
+反问时的硬要求：
+- actions 必须是空数组，这一轮一个字都不许改。
+- reply 用一句人话说明你为什么不敢猜，别讲术语、别长篇大论。
+- choices 给 2~4 个，每个都写成“用户会说的那句话”，不是“你要做的动作名”。
+  好：「把整体字号调小一点」「只把段间距收紧」「换一个更简洁的模板」
+  坏：「fontSize」「选项一」「调整字号」「确定」「取消」
+- 每个选项必须单独点下去就能成句，不能依赖上一句的上下文。
+- 能确定的就直接做，别为了保险每次都问。连着两轮反问会让人烦，宁可先做一版让他看。`;
 
 function turnSuffix(turn: AgentTurn) {
   if (turn.role !== "assistant") return "";
@@ -609,13 +634,19 @@ export function parseAgentReply(text: string): AgentReply {
   const start = cleaned.indexOf("{"),
     end = cleaned.lastIndexOf("}");
   if (start < 0 || end <= start) {
-    return { reply: cleaned.slice(0, 500) || "（没有返回内容）", actions: [] };
+    return {
+      reply: cleaned.slice(0, 500) || "（没有返回内容）",
+      actions: [],
+      choices: [],
+    };
   }
   try {
     const parsed = JSON.parse(cleaned.slice(start, end + 1)) as {
       reply?: unknown;
       actions?: unknown;
       analysis?: unknown;
+      choices?: unknown;
+      options?: unknown;
     };
     const actions = Array.isArray(parsed.actions)
       ? (parsed.actions.filter(
@@ -626,10 +657,32 @@ export function parseAgentReply(text: string): AgentReply {
       reply: String(parsed.reply || "已完成调整。"),
       actions: actions.slice(0, 12),
       analysis: readAnalysis(parsed.analysis),
+      // 已经在动手改的这一轮就不再让人挑说法了：又要预览又要选择，用户会不知道先点哪个
+      choices: actions.length
+        ? []
+        : readChoices(parsed.choices ?? parsed.options),
     };
   } catch {
-    return { reply: cleaned.slice(0, 500), actions: [] };
+    return { reply: cleaned.slice(0, 500), actions: [], choices: [] };
   }
+}
+
+/** 候选项最多 4 个，每个都是一句话/半句话，点了就等于把这句话发出去 */
+const CHOICE_MAX = 4;
+const CHOICE_CHARS = 40;
+
+function readChoices(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const text = item.replace(/\s+/g, " ").trim();
+    if (!text || text.length > CHOICE_CHARS) continue;
+    if (out.includes(text)) continue;
+    out.push(text);
+    if (out.length >= CHOICE_MAX) break;
+  }
+  return out;
 }
 
 const withSettings = (doc: Resume, patch: Partial<Settings>): Resume => ({
