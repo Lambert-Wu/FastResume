@@ -205,11 +205,17 @@ export const AGENT_SYSTEM_PROMPT = `你是简历助手。用户会用中文描�
 8 {"type":"headerAlign","value":"left|center"} 表头对齐
 9 {"type":"compact"} 一键紧凑：字号各减、行高 1.35、段距收紧
 10 {"type":"moveSection","section":"板块标题原文","to":从1开始的目标位置} 调整板块顺序
-11 {"type":"removeEmptyLines"} 删除空行
+11 {"type":"removeEmptyLines"} 清掉文档里的空行（只是让文档更干净：空行不参与排版，
+   删掉后版面和左栏都不会有任何变化，别指望它能去掉视觉上的留白）
 
 规则：
 - 内容已经很长或页数偏多时，优先用 compact、缩小字号、收紧段距、减少页边距。
 - 用户说“学术/简洁/商务/标签风”之类的感觉时，挑最接近的模板并说明选择理由。
+- 用户说“删空行 / 去掉空行”时：给 removeEmptyLines，同时在 reply 里如实说明
+  「空行在版面上本来就不显示，删掉后外观不会变」。如果用户的真实诉求是
+  「看上去空太多 / 太松散 / 间隔太大」，那必须再给 spacing（把各类的 before/after
+  调小，例如 section 2/2→1/1、entry 3/2→2/1、bullet 1/1→0/0）或 compact ——
+  只给 removeEmptyLines 用户会觉得你没做事，因为他根本看不见变化。
 - 一次最多给 6 个动作，不要重复堆叠同一种动作。
 - 只要用户的要求能用上面的动作实现，就必须在 actions 里给出动作，不能只在 reply 里描述。
 - 你可以看到这段对话的历史，用户说“再紧一点”“刚才那个模板”“回到之前那样”时，按历史里已经应用过的改动为基准继续调整。
@@ -798,7 +804,9 @@ export function applyAgentActions(
         continue;
       }
       next = { ...next, lines };
-      notes.push(`删掉 ${removed} 个空行`);
+      // 空行不参与排版（paginate 会先 filter 掉），所以这个动作永远改变不了观感。
+      // notes 会原样念给用户听，必须把这件事写明白，否则用户会以为按钮坏了。
+      notes.push(`删掉 ${removed} 个空行（空行不参与排版，版面上看不出变化）`);
     } else if (type === "setText") {
       // 指到空行就换到最近的可见行：空行不渲染，改它等于没改
       const at = aimedLine(next.lines, action.line);

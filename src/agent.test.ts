@@ -89,6 +89,9 @@ describe("agent layout actions", () => {
     const next = applyAgentActions(withBlank, [{ type: "removeEmptyLines" }]);
     expect(next.doc.lines.some((l) => l.kind === "blank")).toBe(false);
     expect(next.notes[0]).toContain("删掉 1 个空行");
+    // 空行不参与排版，删完版面上不可能有变化。提示里必须说清楚，
+    // 否则用户会以为「点了没反应 = 没做成」。
+    expect(next.notes[0]).toContain("看不出变化");
     const again = applyAgentActions(next.doc, [{ type: "removeEmptyLines" }]);
     expect(again.skipped).toHaveLength(1);
   });
